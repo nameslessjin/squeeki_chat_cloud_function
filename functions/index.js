@@ -14,20 +14,31 @@ var firestore = admin.firestore()
 exports.realTimeUserUpdate = functions.database.ref('user/{user_id}')
             .onUpdate((snapshot, context) => {
                 const new_user_data = snapshot.after.val()
-                const old_user_data = snapshot.before.val()
                 if (new_user_data.online == true){
-                    console.log('connected')
                     return null
                 } else {
-                    console.log('disconnected')
                     return firestore.runTransaction((transaction) => {
-                        const region_ref = firestore.collection('region').doc(new_user_data.region)
-                        return transaction.get(region_ref).then(res => {
+                        const chatroom_ref = firestore.collection('region').doc(new_user_data.region)
+                        .collection('chatroom').doc(new_user_data.chatroom_id)
+                        return transaction.get(chatroom_ref).then(res => {
                             const data = res.data()
                             let user_list = (data.user || [])
                             user_list = user_list.filter((user) => user != new_user_data.uid)
 
-                            return transaction.update(region_ref, {
+                            firestore.runTransaction((secondTransaction) => {
+                                const region_ref = firestore.collection('region').doc(new_user_data.region)
+                                return secondTransaction.get(region_ref).then(res => {
+                                    const data = res.data()
+                                    let user_list = (data.user || [])
+                                    user_list = user_list.filter((user) => user != new_user_data.uid)
+                                    return secondTransaction.update(region_ref, {
+                                        user_count: user_list.length,
+                                        user: user_list
+                                    })
+                                }).catch(err => console.error(err))
+                            })
+
+                            return transaction.update(chatroom_ref, {
                                 user_count: user_list.length,
                                 user: user_list
                             })
@@ -38,56 +49,67 @@ exports.realTimeUserUpdate = functions.database.ref('user/{user_id}')
             })
 
 
+const generateChatroom = (geohash) => {
+    
+    const chatroom_ref = firestore.collection('region').doc(geohash).collection('chatroom')
+
+    const titles = ['Do you go to your 8 AM class today ?', 'Party Squad', 'God, life sucks']
+    const title = titles[Math.floor(Math.random() * titles.length)]
+
+    return chatroom_ref.add({
+        title : title,
+        user_count: 0,
+        user: [],
+        created_time: new Date(Date.now()),
+        max_user_num: 200,
+        full: false
+    })
+    .then(res => {
+        const chatroom_realtime_ref = database.ref(`chatroom/${geohash}/${res.id}`)
+        chatroom_realtime_ref.set({
+            geohash: geohash
+        })
+    })
+    .catch(err => console.error(err))
+    
+}
+
+
 exports.generateChatroomOnRegionCreate = functions.firestore.document('region/{geohash}')
             .onCreate((snapshot, context) => {
-
-                // const region_data = snapshot.data();
-
-                const chatroom_ref = firestore.collection('chatroom')
-
-                // const region_chatroom_ref = firestore.collection('region').doc(context.params.geohash)
-
-                return chatroom_ref.add({
-                    user_count: 0,
-                    user: [],
-                    geohash: context.params.geohash,
-                    created_time: new Date(Date.now())
-                })
-                .catch(err => console.error(err))
-
+                return generateChatroom(context.params.geohash)
             })
+
 
 exports.manageChatroomOnRegionUpdate = functions.firestore.document('region/{geohash}')
             .onUpdate((snapshot, context) => {
 
                 const new_region_data = snapshot.after.data();
                 const old_region_data = snapshot.before.data();
-
+                // const new_user = new_region_data.user
+                // const old_user = old_region_data.user
                 const new_user_count = new_region_data.user_count
                 const old_user_count = old_region_data.user_count
-
                 const new_chatroom_count = Math.ceil(new_user_count / 20)
                 const old_chatroom_count = Math.ceil(old_user_count / 20)
+                const chatroom_ref = firestore.collection('region').doc(context.params.geohash).collection('chatroom')
 
-                const chatroom_ref = firestore.collection('chatroom')
+                
 
                 if (new_chatroom_count > old_chatroom_count){
                     console.log('create a new room')
-                    return chatroom_ref.add({
-                        user_count: 0,
-                        user: [],
-                        geohash: context.params.geohash,
-                        created_time: new Date(Date.now())
-                    })
-                    .catch(err => console.error(err))
+                    return generateChatroom(context.params.geohash)
                 }
 
                 if (new_chatroom_count < old_chatroom_count){
-                    return chatroom_ref.where('geohash', '==', context.params.geohash).where('user_count', '==', 0).limit(1).get()
+                    return chatroom_ref.where('user_count', '==', 0).limit(1).get()
                     .then(res => {
                         if (res.size == 0){
                             return null
                         }
+
+                        const chatroom_realtime_ref = database.ref(`chatroom/${context.params.geohash}/${res.docs[0].id}`)
+                        chatroom_realtime_ref.remove().catch(err => console.log(err))
                         return res.docs[0].ref.delete()
                         .catch(err => console.log(err))
                     })

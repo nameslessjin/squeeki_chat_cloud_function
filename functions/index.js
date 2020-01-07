@@ -14,19 +14,41 @@ var firestore = admin.firestore()
 exports.realTimeUserUpdate = functions.database.ref('user/{user_id}')
             .onUpdate((snapshot, context) => {
                 const new_user_data = snapshot.after.val()
+                const old_user_data = snapshot.before.val()
                 if (new_user_data.online == true){
+                    const new_region = new_user_data.region
+                    const old_region = old_user_data.region
+                    const new_chatroom_id = new_user_data.chatroom_id
+                    const old_chatroom_id = old_user_data.chatroom_id
+
+                    
+
                     return null
                 } else {
+                    // if user go offline
                     return firestore.runTransaction((transaction) => {
                         const chatroom_ref = firestore.collection('region').doc(new_user_data.region)
                         .collection('chatroom').doc(new_user_data.chatroom_id)
                         return transaction.get(chatroom_ref).then(res => {
+                            const region_ref = firestore.collection('region').doc(new_user_data.region)
+                            
+                            if(!res.exists){
+                                return transaction.get(region_ref).then(res => {
+                                    const data = res.data()
+                                    let user_list = (data.user || [])
+                                    user_list = user_list.filter((user) => user != new_user_data.uid)
+                                    return transaction.update(region_ref, {
+                                        user_count: user_list.length,
+                                        user: user_list
+                                    })
+                                }).catch(err => console.error(err))
+                            }
+
                             const data = res.data()
                             let user_list = (data.user || [])
                             user_list = user_list.filter((user) => user != new_user_data.uid)
 
                             firestore.runTransaction((secondTransaction) => {
-                                const region_ref = firestore.collection('region').doc(new_user_data.region)
                                 return secondTransaction.get(region_ref).then(res => {
                                     const data = res.data()
                                     let user_list = (data.user || [])
@@ -62,7 +84,9 @@ const generateChatroom = (geohash) => {
         user: [],
         created_time: new Date(Date.now()),
         max_user_num: 200,
-        full: false
+        full: false,
+        moderator_count: 0,
+        moderator: []
     })
     .then(res => {
         const chatroom_realtime_ref = database.ref(`chatroom/${geohash}/${res.id}`)
@@ -97,7 +121,7 @@ exports.manageChatroomOnRegionUpdate = functions.firestore.document('region/{geo
                 
 
                 if (new_chatroom_count > old_chatroom_count){
-                    console.log('create a new room')
+                    // console.log('create a new room')
                     return generateChatroom(context.params.geohash)
                 }
 
@@ -118,6 +142,60 @@ exports.manageChatroomOnRegionUpdate = functions.firestore.document('region/{geo
                 return null
 
             })
+
+// exports.onChatroomUpdate = functions.firestore.document('region/{geohash}/chatroom/{chatroom_id}')
+//             .onUpdate((snapshot, context) => {
+//                 const new_data = snapshot.after.data()
+//                 const old_data = snapshot.before.data()
+//                 const new_user_list = [...new_data.user]
+//                 const old_user_list = [...old_data.user]
+                
+//                 let change_in_user = null
+//                 if (new_user_list.length > old_user_list.length){
+//                     change_in_user = new_user_list.filter((user => {
+//                         const user_index = old_user_list.indexOf(user)
+//                         if(user_index == -1){
+//                             return true
+//                         }
+//                         return false
+//                     }))[0]
+//                 }
+
+//                 if (new_user_list.length < old_user_list.length){
+//                     change_in_user = old_user_list.filter((user => {
+//                         const user_index = new_user_list.indexOf(user)
+//                         if(user_index == -1){
+//                             return true
+//                         }
+//                         return false
+//                     }))[0]
+//                 }
+
+//                 if (change_in_user == null){
+
+//                 } else {
+//                     let moderator_list = [...data.moderator]
+//                     let user_list_without_moderator = []
+//                     const temp = Math.ceil(new_user_list.length / 10)
+//                     if (moderator_list.length < temp){
+//                         user_list_without_moderator = new_user_list.filter((user => {
+//                             const user_index = moderator_list.indexOf(user)
+//                             if (user_index == -1){
+//                                 return true
+//                             }
+//                             return false
+//                         }))
+//                         const new_moderator = user_list_without_moderator[Math.floor(Math.random() * user_list_without_moderator.length)]
+//                         moderator_list.push(new_moderator)
+//                     }
+
+                    
+//                 }
+
+
+                
+
+//             })
 
 // exports.generateChatroom = functions.database.ref('region/{geohash}')
 //         .onCreate((snapshot, context) => {

@@ -15,11 +15,12 @@ exports.realTimeUserUpdate = functions.database.ref('user/{user_id}')
             .onUpdate((snapshot, context) => {
                 const new_user_data = snapshot.after.val()
                 const old_user_data = snapshot.before.val()
+                const new_region = new_user_data.geohash
+                const old_region = old_user_data.geohash
+                const new_chatroom_id = new_user_data.chatroom_id
+                const old_chatroom_id = old_user_data.chatroom_id
                 if (new_user_data.online == true){
-                    const new_region = new_user_data.region
-                    const old_region = old_user_data.region
-                    const new_chatroom_id = new_user_data.chatroom_id
-                    const old_chatroom_id = old_user_data.chatroom_id
+
 
                     
 
@@ -27,13 +28,15 @@ exports.realTimeUserUpdate = functions.database.ref('user/{user_id}')
                 } else {
                     // if user go offline
                     return firestore.runTransaction((transaction) => {
-                        const chatroom_ref = firestore.collection('region').doc(new_user_data.region)
+                        const chatroom_ref = firestore.collection('region').doc(new_region)
                         .collection('chatroom').doc(new_user_data.chatroom_id)
                         return transaction.get(chatroom_ref).then(res => {
-                            const region_ref = firestore.collection('region').doc(new_user_data.region)
-                            
+                            const region_ref = firestore.collection('region').doc(new_region)
+                            // console.log(res.exists)
+
                             if(!res.exists){
                                 return transaction.get(region_ref).then(res => {
+
                                     const data = res.data()
                                     let user_list = (data.user || [])
                                     user_list = user_list.filter((user) => user != new_user_data.uid)
@@ -50,6 +53,7 @@ exports.realTimeUserUpdate = functions.database.ref('user/{user_id}')
 
                             firestore.runTransaction((secondTransaction) => {
                                 return secondTransaction.get(region_ref).then(res => {
+ 
                                     const data = res.data()
                                     let user_list = (data.user || [])
                                     user_list = user_list.filter((user) => user != new_user_data.uid)
@@ -85,10 +89,9 @@ const generateChatroom = (geohash) => {
         created_time: new Date(Date.now()),
         max_user_num: 200,
         full: false,
-        moderator_count: 0,
-        moderator: []
     })
     .then(res => {
+        // console.log(res.id)
         const chatroom_realtime_ref = database.ref(`chatroom/${geohash}/${res.id}`)
         chatroom_realtime_ref.set({
             geohash: geohash
@@ -98,6 +101,11 @@ const generateChatroom = (geohash) => {
     
 }
 
+const deleteChatroomMod = (chatroom_id) => {
+    const chatroom_moderator_ref = firestore.collection('chatroom_moderator').doc(chatroom_id)
+    // console.log(chatroom_id)
+    return chatroom_moderator_ref.delete().catch(err => console.log(err))
+}
 
 exports.generateChatroomOnRegionCreate = functions.firestore.document('region/{geohash}')
             .onCreate((snapshot, context) => {
@@ -110,14 +118,12 @@ exports.manageChatroomOnRegionUpdate = functions.firestore.document('region/{geo
 
                 const new_region_data = snapshot.after.data();
                 const old_region_data = snapshot.before.data();
-                // const new_user = new_region_data.user
-                // const old_user = old_region_data.user
                 const new_user_count = new_region_data.user_count
                 const old_user_count = old_region_data.user_count
                 const new_chatroom_count = Math.ceil(new_user_count / 20)
                 const old_chatroom_count = Math.ceil(old_user_count / 20)
                 const chatroom_ref = firestore.collection('region').doc(context.params.geohash).collection('chatroom')
-
+                
                 
 
                 if (new_chatroom_count > old_chatroom_count){
@@ -134,6 +140,7 @@ exports.manageChatroomOnRegionUpdate = functions.firestore.document('region/{geo
 
                         const chatroom_realtime_ref = database.ref(`chatroom/${context.params.geohash}/${res.docs[0].id}`)
                         chatroom_realtime_ref.remove().catch(err => console.log(err))
+                        deleteChatroomMod(res.docs[0].id)
                         return res.docs[0].ref.delete()
                         .catch(err => console.log(err))
                     })
@@ -143,59 +150,118 @@ exports.manageChatroomOnRegionUpdate = functions.firestore.document('region/{geo
 
             })
 
-// exports.onChatroomUpdate = functions.firestore.document('region/{geohash}/chatroom/{chatroom_id}')
-//             .onUpdate((snapshot, context) => {
-//                 const new_data = snapshot.after.data()
-//                 const old_data = snapshot.before.data()
-//                 const new_user_list = [...new_data.user]
-//                 const old_user_list = [...old_data.user]
-                
-//                 let change_in_user = null
-//                 if (new_user_list.length > old_user_list.length){
-//                     change_in_user = new_user_list.filter((user => {
-//                         const user_index = old_user_list.indexOf(user)
-//                         if(user_index == -1){
-//                             return true
-//                         }
-//                         return false
-//                     }))[0]
-//                 }
+exports.onChatroomUpdate = functions.firestore.document('region/{geohash}/chatroom/{chatroom_id}')
+            .onUpdate((snapshot, context) => {
+                const new_data = snapshot.after.data()
+                const old_data = snapshot.before.data()
+                const new_user_list = [...new_data.user]
+                const old_user_list = [...old_data.user]
 
-//                 if (new_user_list.length < old_user_list.length){
-//                     change_in_user = old_user_list.filter((user => {
-//                         const user_index = new_user_list.indexOf(user)
-//                         if(user_index == -1){
-//                             return true
-//                         }
-//                         return false
-//                     }))[0]
-//                 }
+                //check if there is change in user_list
+                let change_in_user = null
+                if (new_user_list.length > old_user_list.length){
+                    change_in_user = new_user_list.filter((user => {
+                        const user_index = old_user_list.indexOf(user)
+                        return (user_index == -1) ? true : false
+                    }))[0]
+                }
 
-//                 if (change_in_user == null){
+                if (new_user_list.length < old_user_list.length){
+                    change_in_user = old_user_list.filter((user => {
+                        const user_index = new_user_list.indexOf(user)
+                        return (user_index == -1) ? true : false
+                    }))[0]
+                }
+                // if there is no change in user do nothing
+                if (change_in_user == null){
 
-//                 } else {
-//                     let moderator_list = [...data.moderator]
-//                     let user_list_without_moderator = []
-//                     const temp = Math.ceil(new_user_list.length / 10)
-//                     if (moderator_list.length < temp){
-//                         user_list_without_moderator = new_user_list.filter((user => {
-//                             const user_index = moderator_list.indexOf(user)
-//                             if (user_index == -1){
-//                                 return true
-//                             }
-//                             return false
-//                         }))
-//                         const new_moderator = user_list_without_moderator[Math.floor(Math.random() * user_list_without_moderator.length)]
-//                         moderator_list.push(new_moderator)
-//                     }
+                } else {
+                    const moderator_ref = firestore.collection('chatroom_moderator').doc(context.params.chatroom_id)
+                    return firestore.runTransaction(transaction => {
+                        return transaction.get(moderator_ref).then(res => {
+                            let moderator_list = (res.exists) ? [...res.data().moderator] : []
+                            if (new_user_list.length < old_user_list.length){
+                                moderator_list = moderator_list.filter(moderator => {
+                                    return moderator != change_in_user
+                                })
+                            }
+                            let user_list_without_moderator = []
+                            const temp = Math.ceil(new_user_list.length / 10)
 
-                    
-//                 }
+                            //
+                            if (moderator_list.length < temp){
+                                user_list_without_moderator = new_user_list.filter( user => {
+                                    const user_index = moderator_list.indexOf(user)
+                                    return (user_index == -1) ? true : false
+                                })
+                                const new_moderator = user_list_without_moderator[Math.floor(Math.random() * user_list_without_moderator.length)]
+                                moderator_list.push(new_moderator)
+                            } else if (temp == 0){
+                                moderator_list = []
+                            }
+                            // console.log(moderator_list)
+                            if (res.exists){
+                                return transaction.update(moderator_ref, {
+                                    moderator: moderator_list,
+                                    moderator_count: moderator_list.length
+                                })
+                            } else {
+                                return transaction.set(moderator_ref,{
+                                    moderator: moderator_list,
+                                    moderator_count: moderator_list.length
+                                })
+                            }
+                        })
+                    }).catch(err => console.error(err))
+                }
+                return null
+            })
 
+exports.onChatroomModeratorCreate = functions.firestore.document('chatroom_moderator/{chatroom_moderator_id}')
+            .onCreate((snapshot, context) => {
+                const data = snapshot.data()
+                const moderator_id = data.moderator[0]
+                // console.log(data)
+                const user_ref = database.ref('user').orderByChild('uid').equalTo(moderator_id).limitToFirst(1)
+                return user_ref.once('value').then(res => {
+                    res.forEach(data => {
+                        data.ref.update({
+                            isModerator: true
+                        })
+                    })
+                })
+            })
+    
+exports.onChatroomModeratorUpdate = functions.firestore.document('chatroom_moderator/{chatroom_moderator_id}')
+            .onUpdate((snapshot, context) => {
+                const new_data = snapshot.after.data()
+                const old_data = snapshot.before.data()
+                const new_moderator_list = [...new_data.moderator]
+                const old_moderator_list = [...old_data.moderator]
 
-                
+                let change_in_mod = null
+                if (new_moderator_list.length > old_moderator_list.length){
+                    change_in_mod = new_moderator_list.filter(moderator => {
+                        const index = old_moderator_list.indexOf(moderator)
+                        return (index == -1) ? true : false
+                    })[0]
+                }
+                if (old_moderator_list.length > new_moderator_list.length){
+                    change_in_mod = old_moderator_list.filter(moderator => {
+                        const index = new_moderator_list.indexOf(moderator)
+                        return (index == -1) ? true : false
+                    })[0]
+                }
 
-//             })
+                const user_ref = database.ref('user').orderByChild('uid').equalTo(change_in_mod).limitToFirst(1)
+                return user_ref.once('value').then(res => {
+                    res.forEach(data => {
+                        data.ref.update({
+                            isModerator: (new_moderator_list.length > old_moderator_list.length) ? true : false
+                        })
+                    })
+                })
+            })
 
 // exports.generateChatroom = functions.database.ref('region/{geohash}')
 //         .onCreate((snapshot, context) => {

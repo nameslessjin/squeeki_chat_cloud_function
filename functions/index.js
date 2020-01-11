@@ -103,7 +103,7 @@ const generateChatroom = (geohash) => {
 
 const deleteChatroomMod = (chatroom_id) => {
     const chatroom_moderator_ref = firestore.collection('chatroom_moderator').doc(chatroom_id)
-    // console.log(chatroom_id)
+    console.log(chatroom_id)
     return chatroom_moderator_ref.delete().catch(err => console.log(err))
 }
 
@@ -173,6 +173,7 @@ exports.onChatroomUpdate = functions.firestore.document('region/{geohash}/chatro
                     }))[0]
                 }
                 // if there is no change in user do nothing
+                // console.log(change_in_user)
                 if (change_in_user == null){
 
                 } else {
@@ -240,27 +241,42 @@ exports.onChatroomModeratorUpdate = functions.firestore.document('chatroom_moder
                 const old_moderator_list = [...old_data.moderator]
 
                 let change_in_mod = null
-                if (new_moderator_list.length > old_moderator_list.length){
-                    change_in_mod = new_moderator_list.filter(moderator => {
-                        const index = old_moderator_list.indexOf(moderator)
-                        return (index == -1) ? true : false
-                    })[0]
-                }
-                if (old_moderator_list.length > new_moderator_list.length){
-                    change_in_mod = old_moderator_list.filter(moderator => {
-                        const index = new_moderator_list.indexOf(moderator)
-                        return (index == -1) ? true : false
-                    })[0]
-                }
 
-                const user_ref = database.ref('user').orderByChild('uid').equalTo(change_in_mod).limitToFirst(1)
-                return user_ref.once('value').then(res => {
-                    res.forEach(data => {
-                        data.ref.update({
-                            isModerator: (new_moderator_list.length > old_moderator_list.length) ? true : false
+                let demod = old_moderator_list.filter(moderator => {
+                    const index = new_moderator_list.indexOf(moderator)
+                    return (index == -1) ? true : false
+                })[0] || null
+
+                let promod = new_moderator_list.filter(moderator => {
+                    const index = old_moderator_list.indexOf(moderator)
+                    return (index == -1) ? true : false
+                })[0] || null
+
+                console.log('demond: ', demod)
+                if (demod != null){
+                    const user_ref = database.ref('user').orderByChild('uid').equalTo(demod).limitToFirst(1)
+                    user_ref.once('value').then(res => {
+                        res.forEach(data => {
+                            data.ref.update({
+                                isModerator: false
+                            })
                         })
                     })
-                })
+                }
+
+                console.log('promod: ', promod)
+                if (promod != null){
+                    const user_ref = database.ref('user').orderByChild('uid').equalTo(promod).limitToFirst(1)
+                    user_ref.once('value').then(res => {
+                        res.forEach(data => {
+                            data.ref.update({
+                                isModerator: true
+                            })
+                        })
+                    })
+                }
+
+                return null
             })
 
 // exports.generateChatroom = functions.database.ref('region/{geohash}')
